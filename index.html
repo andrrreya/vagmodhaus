@@ -139,10 +139,18 @@ body{font-family:'Barlow',sans-serif;background:#0e0e0e;color:#f0f0f0;min-height
 .add-wrap{padding:0 16px 12px;max-width:500px;margin:0 auto}
 .add-btn{width:100%;padding:12px;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;border:1.5px dashed #333;background:transparent;color:var(--muted);transition:all .15s}
 .add-btn:hover{background:#1a1a1a;border-color:#444;color:#aaa}
+.eact-undo{background:#1e1e1e;color:var(--muted);border-color:#333;font-size:13px;padding:8px 6px;flex:0 0 auto;width:44px}
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1D9E75;color:#fff;padding:10px 22px;border-radius:20px;font-size:13px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:1}
+.dl-warn{font-size:12px;color:#EF9F27;text-align:center;margin-bottom:8px;padding:8px 12px;background:#2e1e00;border-radius:8px;border:1px solid #3a2800}
+.reset-wrap{padding:0 16px 8px;max-width:500px;margin:0 auto}
+.reset-btn{width:100%;padding:10px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #2a2a2a;background:transparent;color:#555;letter-spacing:.5px}
+.reset-btn:active{background:#1a0a00;color:#888}
 </style>
 </head>
 <body>
 <div id="app"></div>
+<div class="toast" id="toast"></div>
 
 <script>
 const ICONS={
@@ -494,7 +502,7 @@ function totals(b){const r=DB[b];return{total:r.length,ok:r.filter(x=>x.status==
 
 function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 
-function render(){document.getElementById('app').innerHTML=view==='list'?rList():rModel();}
+function render(){document.getElementById('app').innerHTML=view==='list'?rList():rModel();window.scrollTo(0,0);}
 
 function rList(){
   const b=brand,isVW=b==='vw',ms=byModel(b),st=totals(b);
@@ -544,7 +552,11 @@ function rList(){
   });
   h+=`</div></div>
   <div style="padding:0 16px 24px;max-width:500px;margin:0 auto">
+    ${st.left>0?`<div class="dl-warn">⚠ Осталось непроверенных: ${st.left} записей</div>`:''}
     <button class="dl-btn dl-btn-${isVW?'vw':'audi'}" onclick="dlCSV()">⬇ СКАЧАТЬ РЕЗУЛЬТАТЫ CSV</button>
+  </div>
+  <div class="reset-wrap">
+    <button class="reset-btn" onclick="resetConfirm()">↺ Сбросить весь прогресс</button>
   </div>`;
   return h;
 }
@@ -592,6 +604,7 @@ function rModel(){
       h+=`<div class="ecard-actions">
         <button class="eact eact-ok" onclick="markOk(${r.id})">✓ ВЕРНО</button>
         <button class="eact eact-fix" onclick="openFix(${r.id})">✎ ИСПРАВИТЬ</button>
+        ${r.status!=='pending'?`<button class="eact eact-undo" onclick="undoEntry(${r.id})" title="Отменить">↩</button>`:''}
       </div>`;
     } else {
       h+=`<div class="edit-panel">
@@ -614,10 +627,85 @@ function rModel(){
   return h;
 }
 
+const SAVE_KEY='vagmh_progress_v1';
+
+function saveProgress(){
+  try{
+    const saved={};
+    ['vw','audi'].forEach(b=>{
+      saved[b]=DB[b].filter(r=>r.status!=='pending'||r.isNew).map(r=>({id:r.id,status:r.status,fC:r.fC,fS:r.fS,fE:r.fE,fD:r.fD,note:r.note,isNew:r.isNew,model:r.isNew?r.model:'',chassis:r.isNew?r.chassis:'',submodel:r.isNew?r.submodel:'',engine:r.isNew?r.engine:'',drivetrain:r.isNew?r.drivetrain:''}));
+    });
+    localStorage.setItem(SAVE_KEY,JSON.stringify(saved));
+  }catch(e){}
+}
+
+function loadProgress(){
+  try{
+    const raw=localStorage.getItem(SAVE_KEY);
+    if(!raw)return;
+    const saved=JSON.parse(raw);
+    ['vw','audi'].forEach(b=>{
+      if(!saved[b])return;
+      saved[b].forEach(s=>{
+        if(s.isNew){
+          if(!DB[b].find(r=>r.id===s.id)){
+            DB[b].push({id:s.id,model:s.model,chassis:s.chassis,submodel:s.submodel,engine:s.engine,drivetrain:s.drivetrain,status:s.status,fC:s.fC||'',fS:s.fS||'',fE:s.fE||'',fD:s.fD||'',note:s.note||'',isNew:true});
+          }
+        } else {
+          const r=DB[b].find(x=>x.id===s.id);
+          if(r){r.status=s.status;r.fC=s.fC||'';r.fS=s.fS||'';r.fE=s.fE||'';r.fD=s.fD||'';r.note=s.note||'';}
+        }
+      });
+    });
+  }catch(e){}
+}
+
+let toastTimer=null;
+function showToast(msg,color){
+  const t=document.getElementById('toast');
+  if(!t)return;
+  t.textContent=msg;
+  t.style.background=color||'#1D9E75';
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),1800);
+}
+
 function setBrand(b){brand=b;view='list';selModel=null;openEdit=null;render();}
 function goList(){view='list';openEdit=null;render();}
 function openModel(m){selModel=m;view='model';openEdit=null;render();}
-function markOk(id){const r=DB[brand].find(x=>x.id===id);if(r){r.status='ok';openEdit=null;}render();}
+
+function markOk(id){
+  const r=DB[brand].find(x=>x.id===id);
+  if(r){r.status='ok';openEdit=null;}
+  saveProgress();render();
+  showToast('✓ Сохранено');
+}
+
+function undoEntry(id){
+  const r=DB[brand].find(x=>x.id===id);
+  if(!r)return;
+  if(r.isNew){
+    DB[brand]=DB[brand].filter(x=>x.id!==id);
+  } else {
+    r.status='pending';r.fC='';r.fS='';r.fE='';r.fD='';r.note='';
+  }
+  saveProgress();render();
+  showToast('↩ Отменено','#E09020');
+}
+
+function resetConfirm(){
+  if(confirm('Сбросить весь прогресс? Все ответы Макса будут удалены.')){
+    DB.vw.forEach(r=>{if(r.isNew)return;r.status='pending';r.fC='';r.fS='';r.fE='';r.fD='';r.note='';});
+    DB.audi.forEach(r=>{if(r.isNew)return;r.status='pending';r.fC='';r.fS='';r.fE='';r.fD='';r.note='';});
+    DB.vw=DB.vw.filter(r=>!r.isNew);
+    DB.audi=DB.audi.filter(r=>!r.isNew);
+    localStorage.removeItem(SAVE_KEY);
+    render();
+    showToast('Прогресс сброшен','#888');
+  }
+}
+
 function openFix(id){openEdit=(openEdit===id)?null:id;render();}
 
 function saveFix(id){
@@ -629,7 +717,8 @@ function saveFix(id){
   r.note=document.getElementById('fn_'+id)?.value||'';
   const ch=(r.fC&&r.fC!==r.chassis)||(r.fS!==r.submodel)||(r.fE!==r.engine)||(r.fD!==r.drivetrain);
   r.status=r.isNew?'added':(ch?'edited':'ok');
-  openEdit=null;render();
+  openEdit=null;saveProgress();render();
+  showToast(r.isNew?'+ Запись добавлена':'✎ Исправление сохранено','#E09020');
 }
 
 function addEntry(){
@@ -646,6 +735,7 @@ function dlCSV(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`vagmodhaus_${b}_max_review.csv`;a.click();
 }
 
+loadProgress();
 render();
 </script>
 </body>
